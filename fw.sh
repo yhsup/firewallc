@@ -650,16 +650,12 @@ main() {
     backup_initial_firewall
 
     # 自动创建软链接，方便快捷调用
-    if [ ! -f "$SCRIPT_PATH" ]; then
-        echo "创建快捷命令：$SCRIPT_PATH"
-        ln -sf "$ORIGINAL_SCRIPT_PATH" "$SCRIPT_PATH"
-        chmod +x "$ORIGINAL_SCRIPT_PATH" "$SCRIPT_PATH"
-    fi
+if [ ! -f "$SCRIPT_PATH" ]; then
+    ln -sf "$ORIGINAL_SCRIPT_PATH" "$SCRIPT_PATH"
+    echo "✅ 已创建快捷命令: $SCRIPT_PATH"
+fi
 
-    if [[ "$1" == "-uninstall" ]]; then
-        uninstall
-        exit 0
-    fi
+top_menu
 
     # 首次运行安装服务或其他初始化任务（此处留空）
     # if [ ! -f "$FIRST_RUN_FLAG" ]; then
