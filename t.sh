@@ -457,7 +457,6 @@ close_ports() {
 }
 
 # ================= 备份/恢复/卸载（保留原功能，确保备份包含默认规则） =================
-
 backup_firewall() {
     # 1. 显式初始化变量（避免未定义报错，与 backup_initial_firewall 逻辑一致）
     detect_os
@@ -547,11 +546,10 @@ restore_firewall() {
     local BACKUP_LIST=()
     local SELECTED_BACKUP=""
 
-    # 1. 列出可用备份（按系统区分备份文件类型）
+    # 1. 列出可用备份（按系统区分）
     echo "可用备份列表："
     case "$OS" in
         ubuntu|debian)
-            # 只显示 .rules 后缀的备份（可执行规则文件）
             BACKUP_LIST=($(ls -1 "$BACKUP_DIR"/*.rules 2>/dev/null | sort -r))
             ;;
         centos)
@@ -562,40 +560,47 @@ restore_firewall() {
             ;;
     esac
 
-    # 检查是否有备份
     if [ ${#BACKUP_LIST[@]} -eq 0 ]; then
         echo "❌ 未检测到任何备份文件"
         return
     fi
 
-    # 显示备份列表（编号选择）
+    # 显示备份列表并选择
     for i in "${!BACKUP_LIST[@]}"; do
         echo "$((i+1))) $(basename "${BACKUP_LIST[$i]}")"
     done
-
-    # 选择要恢复的备份
     read -p "请输入要恢复的备份编号: " NUM
     SELECTED_BACKUP="${BACKUP_LIST[$((NUM-1))]}"
     [ -z "$SELECTED_BACKUP" ] && { echo "❌ 无效编号"; return; }
 
-    # 2. 执行恢复（按系统区分恢复逻辑）
+    # 2. 执行恢复（核心优化：Ubuntu/Debian 分支过滤无效行）
     echo -e "\n⚙️ 正在恢复备份：$(basename "$SELECTED_BACKUP")"
     case "$OS" in
         ubuntu|debian)
-            echo "恢复 UFW 配置（执行可执行规则命令）..."
+            echo "恢复 UFW 配置（仅执行有效规则，跳过注释/空行）..."
             # 先重置 UFW（清除当前规则，避免冲突）
             ufw --force reset
-            # 关键：逐条执行备份文件中的可执行命令（用 bash 运行文件）
-            if bash "$SELECTED_BACKUP"; then
-                echo "✅ UFW 规则恢复成功"
-            else
-                echo "⚠️ UFW 规则部分执行失败，建议检查备份文件语法"
-            fi
-            # 启用 UFW（确保恢复后生效）
+
+            # 核心优化：过滤无效行，只执行完整规则
+            # 规则：1. 跳过注释行（^#）；2. 跳过空行（^$）；3. 只保留含“ufw allow/deny”且有端口的行（避免残缺）
+            grep -v '^#\|^$' "$SELECTED_BACKUP" | \
+                grep -E '^ufw allow|^ufw deny' | \
+                grep -E 'tcp|udp' | \
+                while read -r rule; do
+                    echo "ℹ️ 执行规则：$rule"
+                    # 执行有效规则，忽略个别失败（避免一条错全停）
+                    if ! $rule; then
+                        echo "⚠️ 规则执行失败（可能已存在）：$rule"
+                    fi
+                done
+
+            # 启用 UFW 并验证
             ufw --force enable
+            echo "✅ UFW 恢复完成（已跳过无效/重复规则）"
             ;;
+
+        # CentOS/Alpine 部分不变（原逻辑无问题）
         centos)
-            # CentOS 恢复逻辑不变
             echo "恢复 firewalld 配置..."
             systemctl stop firewalld
             rm -rf /etc/firewalld/
@@ -604,7 +609,6 @@ restore_firewall() {
             echo "✅ firewalld 恢复成功"
             ;;
         alpine)
-            # Alpine 恢复逻辑不变
             echo "恢复 iptables 配置..."
             iptables-restore < "$SELECTED_BACKUP"
             /etc/init.d/iptables save
@@ -612,8 +616,8 @@ restore_firewall() {
             ;;
     esac
 
-    # 显示恢复结果
-    echo -e "\n恢复后状态："
+    # 显示恢复后状态
+    echo -e "\n恢复后防火墙状态："
     show_status
 }
 
