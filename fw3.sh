@@ -1,5 +1,3 @@
-bash
-  
 #!/bin/bash
 # Firewall one-click config script (已修改：开启即配置系统默认规则)
 # Compatible with Debian/Ubuntu, CentOS/RHEL, Alpine
