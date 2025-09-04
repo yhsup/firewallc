@@ -1,27 +1,14 @@
 #!/bin/bash
-# Firewall one-click config script with uninstall support
+# Firewall one-click config script
 # Compatible with Debian/Ubuntu, CentOS/RHEL, Alpine
-set -euo pipefail
-IFS=$'\n\t'
+set -e
 
-# 全局变量
 BACKUP_DIR="$HOME/fw_backup"
 FIRST_RUN_FLAG="$HOME/.fw_first_run"
-OS=""  # 全局系统变量，避免多次检测
+mkdir -p "$BACKUP_DIR"
 
-# ================= 权限检测 =================
-check_root() {
-    if [ "$EUID" -ne 0 ]; then
-        echo "❌ 请使用root权限运行此脚本！"
-        exit 1
-    fi
-}
-
-# ================= 系统检测（只执行一次） =================
+# ================= 系统检测 =================
 detect_os() {
-    if [[ -n "$OS" ]]; then
-        return
-    fi
     if [[ -f /etc/alpine-release ]]; then
         OS="alpine"
     elif [[ -f /etc/debian_version ]]; then
@@ -33,21 +20,9 @@ detect_os() {
     elif [[ -f /etc/redhat-release ]]; then
         OS="centos"
     else
-        echo "❌ 未知系统，不支持！"
+        echo "未知系统，不支持！"
         exit 1
     fi
-}
-
-# ================= 端口校验 =================
-validate_ports() {
-    local PORTS="$1"
-    for port in $PORTS; do
-        if ! [[ "$port" =~ ^[0-9]+$ ]] || [ "$port" -lt 1 ] || [ "$port" -gt 65535 ]; then
-            echo "❌ 端口号无效: $port （必须是1-65535之间的数字）"
-            return 1
-        fi
-    done
-    return 0
 }
 
 # ================= 依赖检测 =================
@@ -86,23 +61,16 @@ check_dependencies() {
 # ================= 初始防火墙备份 =================
 backup_initial_firewall() {
     detect_os
-    mkdir -p "$BACKUP_DIR"
     local INITIAL_BACKUP="$BACKUP_DIR/initial_firewall_backup"
     if [ ! -f "$FIRST_RUN_FLAG" ]; then
         echo "⚠️ 检测到第一次运行防火墙脚本，是否备份当前防火墙为初始配置？(y/n)"
         read -r answer
         if [[ "$answer" =~ ^[Yy]$ ]]; then
+            mkdir -p "$BACKUP_DIR"
             case "$OS" in
-                ubuntu|debian)
-                    # 备份ufw配置文件和状态，保存更全面
-                    ufw status verbose > "$INITIAL_BACKUP.txt"
-                    ;;
-                centos)
-                    cp -r /etc/firewalld "$INITIAL_BACKUP"
-                    ;;
-                alpine)
-                    iptables-save > "$INITIAL_BACKUP.txt"
-                    ;;
+                ubuntu|debian) ufw status verbose > "$INITIAL_BACKUP.txt" ;;
+                centos) cp -r /etc/firewalld "$INITIAL_BACKUP" ;;
+                alpine) iptables-save > "$INITIAL_BACKUP.txt" ;;
             esac
             echo "✅ 已备份当前防火墙为初始配置"
         else
@@ -117,20 +85,14 @@ show_status() {
     detect_os
     echo "===== 防火墙状态 ====="
     case "$OS" in
-        ubuntu|debian)
-            ufw status verbose || echo "❌ ufw 状态获取失败"
-            ;;
-        centos)
-            firewall-cmd --list-all || echo "❌ firewalld 状态获取失败"
-            ;;
-        alpine)
-            iptables -L -n -v || echo "❌ iptables 状态获取失败"
-            ;;
+        ubuntu|debian) ufw status verbose ;;
+        centos) firewall-cmd --list-all ;;
+        alpine) iptables -L -n -v ;;
     esac
     echo "===== 开放端口 (IPv4) ====="
-    ss -tuln4 2>/dev/null | awk 'NR>1{print $5}' | awk -F':' '{print $NF}' | sort -n | uniq || echo "❌ 无法获取IPv4端口"
+    ss -tuln4 2>/dev/null | awk 'NR>1{print $5}' | awk -F':' '{print $NF}' | sort -n | uniq
     echo "===== 开放端口 (IPv6) ====="
-    ss -tuln6 2>/dev/null | awk 'NR>1{print $5}' | awk -F':' '{print $NF}' | sort -n | uniq || echo "❌ 无法获取IPv6端口"
+    ss -tuln6 2>/dev/null | awk 'NR>1{print $5}' | awk -F':' '{print $NF}' | sort -n | uniq
 }
 
 # ================= 启用/禁用防火墙 =================
@@ -138,10 +100,7 @@ enable_firewall() {
     detect_os
     case "$OS" in
         ubuntu|debian) ufw --force enable ;;
-        centos)
-            systemctl enable firewalld
-            systemctl start firewalld
-            ;;
+        centos) systemctl start firewalld ;;
         alpine) /etc/init.d/iptables start ;;
     esac
     echo "✅ 防火墙已启用"
@@ -163,16 +122,11 @@ configure_ports() {
     detect_os
     echo "请输入 SSH 端口 (默认22):"
     read -r SSH_PORT
-    SSH_PORT=${SSH_PORT:-22}
-    if ! validate_ports "$SSH_PORT"; then return; fi
-
+    [ -z "$SSH_PORT" ] && SSH_PORT=22
     echo "请输入要开放的 TCP 端口 (空格分隔):"
     read -r TCP_PORTS
-    if ! validate_ports "$TCP_PORTS"; then return; fi
-
     echo "请输入要开放的 UDP 端口 (空格分隔):"
     read -r UDP_PORTS
-    if ! validate_ports "$UDP_PORTS"; then return; fi
 
     case "$OS" in
         ubuntu|debian)
@@ -214,16 +168,12 @@ configure_ports() {
     show_status
 }
 
-# ================= 关闭端口 =================
+# ================= 开/关端口 =================
 close_ports() {
     detect_os
     echo "请输入要关闭的端口 (空格分隔, TCP/UDP同时关闭):"
     read -r PORTS
-    if [ -z "$PORTS" ]; then
-        echo "❌ 未输入端口"
-        return
-    fi
-    if ! validate_ports "$PORTS"; then return; fi
+    [ -z "$PORTS" ] && { echo "❌ 未输入端口"; return; }
 
     case "$OS" in
         ubuntu|debian)
@@ -251,25 +201,14 @@ close_ports() {
     show_status
 }
 
-# ================= 开启端口 =================
 open_ports() {
     detect_os
     echo "请输入要开启的端口 (空格分隔):"
     read -r PORTS
-    if [ -z "$PORTS" ]; then
-        echo "❌ 未输入端口"
-        return
-    fi
-    if ! validate_ports "$PORTS"; then return; fi
-
+    [ -z "$PORTS" ] && { echo "❌ 未输入端口"; return; }
     echo "请选择协议类型 (tcp/udp/all):"
     read -r PROTO
     PROTO=$(echo "$PROTO" | tr '[:upper:]' '[:lower:]')
-
-    if [[ ! "$PROTO" =~ ^(tcp|udp|all)$ ]]; then
-        echo "❌ 协议类型无效，只能是 tcp, udp 或 all"
-        return
-    fi
 
     case "$OS" in
         ubuntu|debian)
@@ -297,109 +236,93 @@ open_ports() {
     show_status
 }
 
-# ================= 备份防火墙 =================
+# ================= 备份/恢复 =================
 backup_firewall() {
     detect_os
-    mkdir -p "$BACKUP_DIR"
     TIMESTAMP=$(date +%Y%m%d%H%M%S)
     case "$OS" in
-        ubuntu|debian)
-            ufw status verbose > "$BACKUP_DIR/ufw_backup_$TIMESTAMP.txt"
-            ;;
-        centos)
-            cp -r /etc/firewalld "$BACKUP_DIR/firewalld_backup_$TIMESTAMP"
-            ;;
-        alpine)
-            iptables-save > "$BACKUP_DIR/iptables_backup_$TIMESTAMP.txt"
-            ;;
+        ubuntu|debian) ufw status verbose > "$BACKUP_DIR/ufw_backup_$TIMESTAMP.txt" ;;
+        centos) cp -r /etc/firewalld "$BACKUP_DIR/firewalld_backup_$TIMESTAMP" ;;
+        alpine) iptables-save > "$BACKUP_DIR/iptables_backup_$TIMESTAMP.txt" ;;
     esac
-    echo "✅ 防火墙配置已备份到 $BACKUP_DIR"
+    echo "✅ 防火墙已备份到 $BACKUP_DIR"
 }
 
-# ================= 恢复防火墙 =================
 restore_firewall() {
     detect_os
-    echo "当前备份目录 $BACKUP_DIR 中的文件列表："
+    echo "可用备份列表:"
     ls -1 "$BACKUP_DIR"
-    echo "请输入要恢复的备份文件名或目录名："
-    read -r RESTORE_FILE
-    if [ ! -e "$BACKUP_DIR/$RESTORE_FILE" ]; then
-        echo "❌ 备份文件不存在"
-        return
-    fi
+    echo "请输入要恢复的备份文件名:"
+    read -r BACKUP_FILE
+    [ -z "$BACKUP_FILE" ] && { echo "❌ 未输入备份文件名"; return; }
+    [ ! -f "$BACKUP_DIR/$BACKUP_FILE" ] && [ ! -d "$BACKUP_DIR/$BACKUP_FILE" ] && { echo "❌ 文件不存在"; return; }
 
     case "$OS" in
         ubuntu|debian)
-            # 直接导入ufw规则较复杂，此处只简单展示恢复，建议人工检查
-            echo "⚠️ UFW规则恢复仅支持手动恢复，请查看备份文件 $BACKUP_DIR/$RESTORE_FILE"
+            ufw --force reset
+            grep -E "ALLOW|DENY" "$BACKUP_DIR/$BACKUP_FILE" | while read -r line; do
+                RULE=$(echo "$line" | awk '{print $1 " " $2 " " $3}')
+                ufw $RULE
+            done
+            ufw --force enable
             ;;
         centos)
-            systemctl stop firewalld
             rm -rf /etc/firewalld
-            cp -r "$BACKUP_DIR/$RESTORE_FILE" /etc/firewalld
-            systemctl start firewalld
+            cp -r "$BACKUP_DIR/$BACKUP_FILE" /etc/firewalld
+            systemctl restart firewalld
             ;;
         alpine)
-            iptables-restore < "$BACKUP_DIR/$RESTORE_FILE"
+            iptables-restore < "$BACKUP_DIR/$BACKUP_FILE"
+            /etc/init.d/iptables save
             ;;
     esac
-    echo "✅ 恢复完成"
+    echo "✅ 防火墙已恢复"
     show_status
 }
 
-# ================= 恢复初始配置 =================
-restore_initial() {
+restore_initial_firewall() {
     detect_os
     local INITIAL_BACKUP="$BACKUP_DIR/initial_firewall_backup"
-    if [ ! -e "$INITIAL_BACKUP" ] && [ ! -d "$INITIAL_BACKUP" ] && [ ! -e "$INITIAL_BACKUP.txt" ]; then
-        echo "❌ 未找到初始备份，无法恢复"
-        return
-    fi
+    local FILE="$INITIAL_BACKUP"
+    [[ "$OS" == "ubuntu" || "$OS" == "debian" ]] && FILE="$INITIAL_BACKUP.txt"
+    [[ "$OS" == "alpine" ]] && FILE="$INITIAL_BACKUP.txt"
+
+    [ ! -f "$FILE" ] && [ ! -d "$FILE" ] && { echo "❌ 无初始配置备份文件，请先备份"; return; }
+
+    echo "⚠️ 即将恢复初始防火墙配置，是否继续？(y/n)"
+    read -r answer
+    [[ ! "$answer" =~ ^[Yy]$ ]] && { echo "已取消恢复"; return; }
+
     case "$OS" in
         ubuntu|debian)
-            if [ -f "$INITIAL_BACKUP.txt" ]; then
-                echo "⚠️ 恢复初始配置请手动查看文件：$INITIAL_BACKUP.txt"
-            else
-                echo "❌ 找不到初始备份文件"
-            fi
+            ufw --force reset
+            grep -E "ALLOW|DENY" "$FILE" | while read -r line; do
+                RULE=$(echo "$line" | awk '{print $1 " " $2 " " $3}')
+                ufw $RULE
+            done
+            ufw --force enable
             ;;
         centos)
-            if [ -d "$INITIAL_BACKUP" ]; then
-                systemctl stop firewalld
-                rm -rf /etc/firewalld
-                cp -r "$INITIAL_BACKUP" /etc/firewalld
-                systemctl start firewalld
-                echo "✅ 已恢复初始防火墙配置"
-            else
-                echo "❌ 找不到初始备份目录"
-            fi
+            rm -rf /etc/firewalld
+            cp -r "$FILE" /etc/firewalld
+            systemctl restart firewalld
             ;;
         alpine)
-            if [ -f "$INITIAL_BACKUP.txt" ]; then
-                iptables-restore < "$INITIAL_BACKUP.txt"
-                echo "✅ 已恢复初始防火墙配置"
-            else
-                echo "❌ 找不到初始备份文件"
-            fi
+            iptables-restore < "$FILE"
+            /etc/init.d/iptables save
             ;;
     esac
-}
-
-# ================= 卸载 =================
-uninstall() {
-    echo "⚠️ 正在卸载防火墙脚本，恢复初始防火墙配置..."
-    restore_initial
-    rm -f "$FIRST_RUN_FLAG"
-    echo "✅ 卸载完成"
-    exit 0
+    echo "✅ 已恢复初始防火墙配置"
+    show_status
 }
 
 # ================= 主菜单 =================
 main_menu() {
+    check_dependencies
+    backup_initial_firewall
     while true; do
-        echo
-        echo "======= 防火墙配置管理脚本 ======="
-        echo "0) 初始化防火墙（设置端口）"
+        echo "====== 防火墙菜单 ======"
+        echo "0) 初始化防火墙"
         echo "1) 开启防火墙"
         echo "2) 关闭防火墙"
         echo "3) 修改防火墙端口"
@@ -410,9 +333,9 @@ main_menu() {
         echo "8) 开启端口 (选择 TCP/UDP/all)"
         echo "9) 恢复初始防火墙配置"
         echo "q) 退出"
-        echo "================================="
-        read -rp "请输入选项: " choice
-        case "$choice" in
+        echo -n "请选择操作: "
+        read -r choice
+        case $choice in
             0) configure_ports ;;
             1) enable_firewall ;;
             2) disable_firewall ;;
@@ -422,21 +345,11 @@ main_menu() {
             6) show_status ;;
             7) close_ports ;;
             8) open_ports ;;
-            9) restore_initial ;;
-            q|Q) echo "退出脚本"; exit 0 ;;
+            9) restore_initial_firewall ;;
+            q|Q) exit 0 ;;
             *) echo "❌ 无效选项" ;;
         esac
     done
 }
-
-# ================= 入口 =================
-check_root
-check_dependencies
-backup_initial_firewall
-
-# 处理卸载参数
-if [[ "${1-}" == "-uninstall" ]]; then
-    uninstall
-fi
 
 main_menu
