@@ -242,58 +242,32 @@ open_ports() {
 
     [ -z "$PORTS" ] && { echo "❌ 未输入端口"; return; }
 
-    case "$OS" in
-        alpine)
-            for port in $PORTS; do
-                case "$proto_choice" in
-                    1)
-                        iptables -I INPUT 1 -p tcp --dport "$port" -j ACCEPT
-                        ;;
-                    2)
-                        iptables -I INPUT 1 -p udp --dport "$port" -j ACCEPT
-                        ;;
-                    3)
-                        iptables -I INPUT 1 -p tcp --dport "$port" -j ACCEPT
-                        iptables -I INPUT 1 -p udp --dport "$port" -j ACCEPT
-                        ;;
-                    *)
-                        echo "❌ 无效协议选项"; return
-                        ;;
-                esac
-            done
-            /etc/init.d/iptables save
-            ;;
-        centos|ubuntu)
-            # Ubuntu和CentOS常见使用firewall-cmd或者ufw，如果你用iptables请修改此处
-            for port in $PORTS; do
-                case "$proto_choice" in
-                    1)
-                        iptables -I INPUT 1 -p tcp --dport "$port" -j ACCEPT
-                        ;;
-                    2)
-                        iptables -I INPUT 1 -p udp --dport "$port" -j ACCEPT
-                        ;;
-                    3)
-                        iptables -I INPUT 1 -p tcp --dport "$port" -j ACCEPT
-                        iptables -I INPUT 1 -p udp --dport "$port" -j ACCEPT
-                        ;;
-                    *)
-                        echo "❌ 无效协议选项"; return
-                        ;;
-                esac
-            done
-            # CentOS保存规则：
-            if command -v service >/dev/null && service iptables status >/dev/null 2>&1; then
-                service iptables save
-            else
-                iptables-save > /etc/iptables/rules.v4
-            fi
-            ;;
-        *)
-            echo "❌ 不支持的操作系统"
-            return
-            ;;
-    esac
+    for port in $PORTS; do
+        case "$proto_choice" in
+            1) protos=("tcp") ;;
+            2) protos=("udp") ;;
+            3) protos=("tcp" "udp") ;;
+            *) echo "❌ 无效协议选项"; return ;;
+        esac
+
+        for proto in "${protos[@]}"; do
+            case "$OS" in
+                ubuntu|debian)
+                    ufw allow "${port}/${proto}" || echo "⚠️ 添加失败: $port/$proto"
+                    ;;
+                centos)
+                    firewall-cmd --permanent --add-port="${port}/${proto}" || echo "⚠️ 添加失败: $port/$proto"
+                    ;;
+                alpine)
+                    iptables -I INPUT -p "$proto" --dport "$port" -j ACCEPT
+                    ;;
+            esac
+        done
+    done
+
+    [[ "$OS" == "centos" ]] && firewall-cmd --reload
+    [[ "$OS" == "alpine" ]] && /etc/init.d/iptables save
+
     echo "✅ 已成功开放端口"
     show_status
 }
@@ -307,56 +281,32 @@ close_ports() {
 
     [ -z "$PORTS" ] && { echo "❌ 未输入端口"; return; }
 
-    case "$OS" in
-        alpine)
-            for port in $PORTS; do
-                case "$proto_choice" in
-                    1)
-                        iptables -D INPUT -p tcp --dport "$port" -j ACCEPT 2>/dev/null
-                        ;;
-                    2)
-                        iptables -D INPUT -p udp --dport "$port" -j ACCEPT 2>/dev/null
-                        ;;
-                    3)
-                        iptables -D INPUT -p tcp --dport "$port" -j ACCEPT 2>/dev/null
-                        iptables -D INPUT -p udp --dport "$port" -j ACCEPT 2>/dev/null
-                        ;;
-                    *)
-                        echo "❌ 无效协议选项"; return
-                        ;;
-                esac
-            done
-            /etc/init.d/iptables save
-            ;;
-        centos|ubuntu)
-            for port in $PORTS; do
-                case "$proto_choice" in
-                    1)
-                        iptables -D INPUT -p tcp --dport "$port" -j ACCEPT 2>/dev/null
-                        ;;
-                    2)
-                        iptables -D INPUT -p udp --dport "$port" -j ACCEPT 2>/dev/null
-                        ;;
-                    3)
-                        iptables -D INPUT -p tcp --dport "$port" -j ACCEPT 2>/dev/null
-                        iptables -D INPUT -p udp --dport "$port" -j ACCEPT 2>/dev/null
-                        ;;
-                    *)
-                        echo "❌ 无效协议选项"; return
-                        ;;
-                esac
-            done
-            if command -v service >/dev/null && service iptables status >/dev/null 2>&1; then
-                service iptables save
-            else
-                iptables-save > /etc/iptables/rules.v4
-            fi
-            ;;
-        *)
-            echo "❌ 不支持的操作系统"
-            return
-            ;;
-    esac
+    for port in $PORTS; do
+        case "$proto_choice" in
+            1) protos=("tcp") ;;
+            2) protos=("udp") ;;
+            3) protos=("tcp" "udp") ;;
+            *) echo "❌ 无效协议选项"; return ;;
+        esac
+
+        for proto in "${protos[@]}"; do
+            case "$OS" in
+                ubuntu|debian)
+                    ufw delete allow "${port}/${proto}" || echo "⚠️ 删除失败: $port/$proto"
+                    ;;
+                centos)
+                    firewall-cmd --permanent --remove-port="${port}/${proto}" || echo "⚠️ 删除失败: $port/$proto"
+                    ;;
+                alpine)
+                    iptables -D INPUT -p "$proto" --dport "$port" -j ACCEPT
+                    ;;
+            esac
+        done
+    done
+
+    [[ "$OS" == "centos" ]] && firewall-cmd --reload
+    [[ "$OS" == "alpine" ]] && /etc/init.d/iptables save
+
     echo "✅ 已成功关闭端口"
     show_status
 }
@@ -646,7 +596,7 @@ main_menu() {
             8) restore_firewall; read -rp "按回车继续..." ;;
             9) uninstall ;;
             10) force_close_ports; read -rp "按回车继续..." ;;
-            11) restore_closed_ports; read -rp "按回车继续..." ;;
+			11) restore_forced_closed_ports; read -rp "按回车继续..." ;;
             0) break ;;
             *) echo "无效输入"; sleep 1 ;;
         esac
@@ -663,17 +613,32 @@ top_menu() {
         echo "2) 卸载脚本"
         echo "3) 只打开防火墙控制面板（不启用防火墙）"
         echo "0) 退出"
-        echo -n "请输入选项: "
+        echo -n "请输入选项 [默认: 3]: "
         read -r choice
+
+        # 如果用户未输入，默认设置为 3
+        if [[ -z "$choice" ]]; then
+            choice=3
+        fi
+
         case "$choice" in
             1)
                 enable_firewall
                 main_menu
                 ;;
-            2) uninstall ;;
-            3) main_menu ;;  
-            0) exit 0 ;;
-            *) echo "无效输入，请重新输入" ; sleep 1 ;;
+            2)
+                uninstall
+                ;;
+            3)
+                main_menu
+                ;;
+            0)
+                exit 0
+                ;;
+            *)
+                echo "无效输入，请重新输入"
+                sleep 1
+                ;;
         esac
     done
 }
