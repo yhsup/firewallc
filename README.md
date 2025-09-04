@@ -1,6 +1,6 @@
 # firewallc
 防火墙控制脚本
-sudo bash -c "$(wget -qO- https://raw.githubusercontent.com/yhsup/firewallc/blob/main/fw.sh))"
+sudo bash -c "$(wget -qO- https://raw.githubusercontent.com/yhsup/firewallc/blob/main/fw.sh)"
 
         echo "====== 防火墙管理面板 ======"
         echo "1) 显示防火墙状态"
