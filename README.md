@@ -16,3 +16,4 @@ sudo bash -c "$(wget -qO- https://raw.githubusercontent.com/yhsup/firewallc/refs
         echo -n "请输入选项: "
 
         测试版，未测试，未完善，谨慎使用
+默认关闭所有入站，开启出站
