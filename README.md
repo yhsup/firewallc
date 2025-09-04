@@ -1,3 +1,9 @@
+测试版，未测试，未完善，别使用
+测试版，未测试，未完善，别使用
+测试版，未测试，未完善，别使用
+测试版，未测试，未完善，谨慎使用
+测试版，未测试，未完善，谨慎使用
+测试版，未测试，未完善，谨慎使用
 # firewallc
 防火墙控制脚本
 bash <(wget -qO- https://raw.githubusercontent.com/yhsup/firewallc/refs/heads/main/fw.sh)
