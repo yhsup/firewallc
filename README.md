@@ -1,3 +1,5 @@
+ai写的
+
 测试版，未测试，未完善，别使用
 
 测试版，未测试，未完善，别使用
@@ -14,7 +16,7 @@
 
 # firewallc
 防火墙控制脚本
-bash <(wget -qO- https://raw.githubusercontent.com/yhsup/firewallc/refs/heads/main/fwc3.sh)
+bash <(wget -qO- https://raw.githubusercontent.com/yhsup/firewallc/refs/heads/main/fwc.sh)
 
         echo "====== 防火墙管理面板 ======"
         echo "1) 显示防火墙状态"
