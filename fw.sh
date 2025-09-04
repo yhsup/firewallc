@@ -101,11 +101,24 @@ show_status() {
         centos) firewall-cmd --list-all ;;
         alpine) iptables -L -n -v ;;
     esac
-    echo "===== 开放端口 (IPv4) ====="
-    ss -tuln4 2>/dev/null | awk 'NR>1{print $5}' | awk -F':' '{print $NF}' | sort -n | uniq
-    echo "===== 开放端口 (IPv6) ====="
-    ss -tuln6 2>/dev/null | awk 'NR>1{print $5}' | awk -F':' '{print $NF}' | sort -n | uniq
+
+    echo ""
+    echo "===== 开放端口 (IPv4 和 IPv6，含协议) ====="
+    ss -tuln 2>/dev/null | awk '
+        NR > 1 {
+            proto = $1
+            port = $5
+            if (proto ~ /tcp/) {
+                gsub(".*:", "", port)
+                print port "/tcp"
+            } else if (proto ~ /udp/) {
+                gsub(".*:", "", port)
+                print port "/udp"
+            }
+        }
+    ' | sort -u
 }
+
 
 # ================= 显示入站/出站默认策略 =================
 show_firewall_policies() {
@@ -143,7 +156,6 @@ show_firewall_policies() {
             echo "未知系统，无法显示默认策略"
             ;;
     esac
-    echo "======================================"
 }
 
 
@@ -221,67 +233,131 @@ configure_ports() {
 }
 
 # ================= 开/关端口 =================
-close_ports() {
+open_ports() {
     detect_os
-    echo "请输入要关闭的端口 (空格分隔, TCP/UDP同时关闭):"
+    echo "请输入要开放的端口（多个端口用空格分隔）:"
     read -r PORTS
+    echo "请选择协议类型：1) TCP 2) UDP 3) TCP和UDP"
+    read -r proto_choice
+
     [ -z "$PORTS" ] && { echo "❌ 未输入端口"; return; }
 
     case "$OS" in
-        ubuntu|debian)
-            for port in $PORTS; do
-                ufw delete allow "${port}/tcp" || true
-                ufw delete allow "${port}/udp" || true
-            done
-            ;;
-        centos)
-            for port in $PORTS; do
-                firewall-cmd --permanent --remove-port="${port}/tcp"
-                firewall-cmd --permanent --remove-port="${port}/udp"
-            done
-            firewall-cmd --reload
-            ;;
         alpine)
             for port in $PORTS; do
-                iptables -D INPUT -p tcp --dport "$port" -j ACCEPT || true
-                iptables -D INPUT -p udp --dport "$port" -j ACCEPT || true
+                case "$proto_choice" in
+                    1)
+                        iptables -I INPUT 1 -p tcp --dport "$port" -j ACCEPT
+                        ;;
+                    2)
+                        iptables -I INPUT 1 -p udp --dport "$port" -j ACCEPT
+                        ;;
+                    3)
+                        iptables -I INPUT 1 -p tcp --dport "$port" -j ACCEPT
+                        iptables -I INPUT 1 -p udp --dport "$port" -j ACCEPT
+                        ;;
+                    *)
+                        echo "❌ 无效协议选项"; return
+                        ;;
+                esac
             done
             /etc/init.d/iptables save
             ;;
+        centos|ubuntu)
+            # Ubuntu和CentOS常见使用firewall-cmd或者ufw，如果你用iptables请修改此处
+            for port in $PORTS; do
+                case "$proto_choice" in
+                    1)
+                        iptables -I INPUT 1 -p tcp --dport "$port" -j ACCEPT
+                        ;;
+                    2)
+                        iptables -I INPUT 1 -p udp --dport "$port" -j ACCEPT
+                        ;;
+                    3)
+                        iptables -I INPUT 1 -p tcp --dport "$port" -j ACCEPT
+                        iptables -I INPUT 1 -p udp --dport "$port" -j ACCEPT
+                        ;;
+                    *)
+                        echo "❌ 无效协议选项"; return
+                        ;;
+                esac
+            done
+            # CentOS保存规则：
+            if command -v service >/dev/null && service iptables status >/dev/null 2>&1; then
+                service iptables save
+            else
+                iptables-save > /etc/iptables/rules.v4
+            fi
+            ;;
+        *)
+            echo "❌ 不支持的操作系统"
+            return
+            ;;
     esac
-    echo "✅ 已关闭指定端口"
+    echo "✅ 已成功开放端口"
     show_status
 }
 
-open_ports() {
+close_ports() {
     detect_os
-    echo "请输入要开放的端口 (空格分隔, TCP/UDP同时开放):"
+    echo "请输入要关闭的端口（多个端口用空格分隔）:"
     read -r PORTS
+    echo "请选择协议类型：1) TCP 2) UDP 3) TCP和UDP"
+    read -r proto_choice
+
     [ -z "$PORTS" ] && { echo "❌ 未输入端口"; return; }
 
     case "$OS" in
-        ubuntu|debian)
-            for port in $PORTS; do
-                ufw allow "${port}/tcp"
-                ufw allow "${port}/udp"
-            done
-            ;;
-        centos)
-            for port in $PORTS; do
-                firewall-cmd --permanent --add-port="${port}/tcp"
-                firewall-cmd --permanent --add-port="${port}/udp"
-            done
-            firewall-cmd --reload
-            ;;
         alpine)
             for port in $PORTS; do
-                iptables -A INPUT -p tcp --dport "$port" -j ACCEPT
-                iptables -A INPUT -p udp --dport "$port" -j ACCEPT
+                case "$proto_choice" in
+                    1)
+                        iptables -D INPUT -p tcp --dport "$port" -j ACCEPT 2>/dev/null
+                        ;;
+                    2)
+                        iptables -D INPUT -p udp --dport "$port" -j ACCEPT 2>/dev/null
+                        ;;
+                    3)
+                        iptables -D INPUT -p tcp --dport "$port" -j ACCEPT 2>/dev/null
+                        iptables -D INPUT -p udp --dport "$port" -j ACCEPT 2>/dev/null
+                        ;;
+                    *)
+                        echo "❌ 无效协议选项"; return
+                        ;;
+                esac
             done
             /etc/init.d/iptables save
             ;;
+        centos|ubuntu)
+            for port in $PORTS; do
+                case "$proto_choice" in
+                    1)
+                        iptables -D INPUT -p tcp --dport "$port" -j ACCEPT 2>/dev/null
+                        ;;
+                    2)
+                        iptables -D INPUT -p udp --dport "$port" -j ACCEPT 2>/dev/null
+                        ;;
+                    3)
+                        iptables -D INPUT -p tcp --dport "$port" -j ACCEPT 2>/dev/null
+                        iptables -D INPUT -p udp --dport "$port" -j ACCEPT 2>/dev/null
+                        ;;
+                    *)
+                        echo "❌ 无效协议选项"; return
+                        ;;
+                esac
+            done
+            if command -v service >/dev/null && service iptables status >/dev/null 2>&1; then
+                service iptables save
+            else
+                iptables-save > /etc/iptables/rules.v4
+            fi
+            ;;
+        *)
+            echo "❌ 不支持的操作系统"
+            return
+            ;;
     esac
-    echo "✅ 已开放指定端口"
+    echo "✅ 已成功关闭端口"
     show_status
 }
 
@@ -431,7 +507,115 @@ uninstall() {
     fi
 }
 
-# ================= 主菜单 =================
+# 新增全局变量，记录强制关闭端口文件
+FORCE_CLOSE_FILE="$BACKUP_DIR/force_closed_ports.txt"
+
+# ================= 强制关闭 / 恢复端口 =================
+
+FORCED_CLOSE_FILE="$BACKUP_DIR/forced_closed_ports.txt"
+
+force_close_ports() {
+    detect_os
+    echo "请输入要强制关闭的端口 (空格分隔):"
+    read -r PORTS
+    [ -z "$PORTS" ] && { echo "❌ 未输入端口"; return; }
+
+    echo "请选择协议类型:"
+    echo "1) TCP"
+    echo "2) UDP"
+    echo "3) TCP 和 UDP"
+    read -r proto_opt
+    case "$proto_opt" in
+        1) PROTO="tcp" ;;
+        2) PROTO="udp" ;;
+        3) PROTO="both" ;;
+        *) echo "❌ 无效选择"; return ;;
+    esac
+
+    for port in $PORTS; do
+        case "$PROTO" in
+            tcp)
+                close_single_port "$port" tcp
+                ;;
+            udp)
+                close_single_port "$port" udp
+                ;;
+            both)
+                close_single_port "$port" tcp
+                close_single_port "$port" udp
+                ;;
+        esac
+    done
+
+    echo "✅ 强制关闭完成"
+    show_status
+}
+
+close_single_port() {
+    local port=$1
+    local proto=$2
+
+    case "$OS" in
+        ubuntu|debian)
+            ufw delete allow "${port}/${proto}" || true
+            ;;
+        centos)
+            firewall-cmd --permanent --remove-port="${port}/${proto}" || true
+            ;;
+        alpine)
+            iptables -D INPUT -p "$proto" --dport "$port" -j ACCEPT || true
+            ;;
+    esac
+
+    mkdir -p "$BACKUP_DIR"
+    echo "$port/$proto" >> "$FORCED_CLOSE_FILE"
+}
+
+restore_forced_closed_ports() {
+    detect_os
+    if [ ! -f "$FORCED_CLOSE_FILE" ]; then
+        echo "❌ 没有发现被强制关闭的端口记录"
+        return
+    fi
+
+    echo "即将恢复以下被强制关闭的端口："
+    cat "$FORCED_CLOSE_FILE"
+    echo "是否继续？(Y/n)"
+    read -r confirm
+    confirm="${confirm:-y}"
+    if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+        echo "❌ 已取消恢复"
+        return
+    fi
+
+    while read -r line; do
+        port=$(echo "$line" | cut -d'/' -f1)
+        proto=$(echo "$line" | cut -d'/' -f2)
+
+        case "$OS" in
+            ubuntu|debian)
+                ufw allow "${port}/${proto}" || true
+                ;;
+            centos)
+                firewall-cmd --permanent --add-port="${port}/${proto}" || true
+                ;;
+            alpine)
+                iptables -A INPUT -p "$proto" --dport "$port" -j ACCEPT || true
+                ;;
+        esac
+    done < "$FORCED_CLOSE_FILE"
+
+    case "$OS" in
+        centos) firewall-cmd --reload ;;
+        alpine) /etc/init.d/iptables save ;;
+    esac
+
+    rm -f "$FORCED_CLOSE_FILE"
+    echo "✅ 已恢复强制关闭的端口"
+    show_status
+}
+
+# =============== 修改主菜单，新增选项 ===============
 main_menu() {
     while true; do
         clear
@@ -446,6 +630,8 @@ main_menu() {
         echo "7) 备份当前防火墙"
         echo "8) 恢复防火墙"
         echo "9) 卸载脚本"
+        echo "10) 强制关闭端口（支持 TCP/UDP/tcp+udp）！无效！"
+        echo "11) 恢复强制关闭的端口！无效！"
         echo "0) 返回"
         echo -n "请输入选项: "
         read -r opt
@@ -459,11 +645,14 @@ main_menu() {
             7) backup_firewall; read -rp "按回车继续..." ;;
             8) restore_firewall; read -rp "按回车继续..." ;;
             9) uninstall ;;
+            10) force_close_ports; read -rp "按回车继续..." ;;
+            11) restore_closed_ports; read -rp "按回车继续..." ;;
             0) break ;;
             *) echo "无效输入"; sleep 1 ;;
         esac
     done
 }
+
 
 # ================= 顶层菜单 =================
 top_menu() {
