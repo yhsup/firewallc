@@ -96,60 +96,54 @@ backup_initial_firewall() {
     fi
 }
 
-# ================= 应用系统默认规则（新增核心函数） =================
+# ================= 应用系统默认规则 =================
 apply_default_rules() {
     detect_os
     echo "📦 正在应用系统默认防火墙规则（保障基础通信）..."
     case "$OS" in
         ubuntu|debian)
-            # 1. 重置基础规则
+            # 1. 重置基础规则（修复：删除 UFW 不支持的 state 语法）
             ufw --force reset
             ufw default deny incoming  # 入站默认拒绝（仅开放必要端口）
             ufw default allow outgoing  # 出站默认允许（不限制主动访问）
-            # 2. 应用默认规则：回环接口、已建立连接、Ping
-            ufw allow in on lo  # 允许回环接口
-            ufw allow in proto tcp from any to any state ESTABLISHED  # 允许已建立TCP连接回程
-            ufw allow in proto udp from any to any state ESTABLISHED  # 允许已建立UDP连接回程
-            ufw allow in proto icmp from any to any icmp-type echo-request  # 允许Ping
-            # 3. 开放默认TCP/UDP端口
+            # 2. 应用默认规则：回环接口、Ping（UFW 自动处理已建立连接，无需手动加 state 规则）
+            ufw allow in on lo  # 允许回环接口（本地服务通信）
+            ufw allow in proto icmp from any to any icmp-type echo-request  # 允许 Ping
+            # 3. 开放默认TCP/UDP端口（SSH、DNS、HTTP、HTTPS）
             for port in $DEFAULT_TCP_PORTS; do ufw allow "${port}/tcp"; done
             for port in $DEFAULT_UDP_PORTS; do ufw allow "${port}/udp"; done
             ;;
         centos)
-            # 1. 启动firewalld并设置默认策略
+            # （保持不变，无需修改）
             systemctl enable --now firewalld
             firewall-cmd --set-default-zone=public
-            firewall-cmd --permanent --set-target=DROP --zone=public  # 入站默认拒绝
-            # 2. 应用默认规则：回环、已建立连接、Ping
-            firewall-cmd --permanent --add-interface=lo --zone=trusted  # 回环接口设为可信
-            firewall-cmd --permanent --add-rich-rule='rule family="ipv4" state ESTABLISHED accept'  # 已建立连接
-            firewall-cmd --permanent --add-icmp-block-inversion  # 允许Ping（firewalld默认拒绝，需反转）
-            firewall-cmd --permanent --add-icmp-type=echo-request  # 允许Ping请求
-            # 3. 开放默认TCP/UDP端口
+            firewall-cmd --permanent --set-target=DROP --zone=public
+            firewall-cmd --permanent --add-interface=lo --zone=trusted
+            firewall-cmd --permanent --add-rich-rule='rule family="ipv4" state ESTABLISHED accept'
+            firewall-cmd --permanent --add-icmp-block-inversion
+            firewall-cmd --permanent --add-icmp-type=echo-request
             for port in $DEFAULT_TCP_PORTS; do firewall-cmd --permanent --add-port="${port}/tcp"; done
             for port in $DEFAULT_UDP_PORTS; do firewall-cmd --permanent --add-port="${port}/udp"; done
-            firewall-cmd --reload  # 生效规则
+            firewall-cmd --reload
             ;;
         alpine)
-            # 1. 重置iptables并设置默认策略
+            # （保持不变，无需修改）
             iptables -F && iptables -X
-            iptables -P INPUT DROP    # 入站默认拒绝
-            iptables -P FORWARD DROP  # 转发默认拒绝
-            iptables -P OUTPUT ACCEPT # 出站默认允许
-            # 2. 应用默认规则：回环、已建立连接、Ping
-            iptables -A INPUT -i lo -j ACCEPT  # 回环接口
-            iptables -A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT  # 已建立/相关连接
-            iptables -A INPUT -p icmp --icmp-type echo-request -j ACCEPT  # 允许Ping
-            # 3. 开放默认TCP/UDP端口
+            iptables -P INPUT DROP
+            iptables -P FORWARD DROP
+            iptables -P OUTPUT ACCEPT
+            iptables -A INPUT -i lo -j ACCEPT
+            iptables -A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+            iptables -A INPUT -p icmp --icmp-type echo-request -j ACCEPT
             for port in $DEFAULT_TCP_PORTS; do iptables -A INPUT -p tcp --dport "$port" -j ACCEPT; done
             for port in $DEFAULT_UDP_PORTS; do iptables -A INPUT -p udp --dport "$port" -j ACCEPT; done
-            # 保存规则（Alpine需手动保存）
             /etc/init.d/iptables save
-            rc-update add iptables default  # 设置开机启动
+            rc-update add iptables default
             ;;
     esac
     echo "✅ 系统默认规则应用完成（已开放：SSH/22、DNS/53、HTTP/80、HTTPS/443 + 基础通信）"
 }
+
 
 # ================= 防火墙状态 =================
 show_status() {
