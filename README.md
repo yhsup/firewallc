@@ -16,7 +16,7 @@ ai写的
 
 # firewallc
 防火墙控制脚本
-bash <(wget -qO- https://raw.githubusercontent.com/yhsup/firewallc/refs/heads/main/fwc.sh)
+bash <(wget -q -P /root/ https://raw.githubusercontent.com/yhsup/firewallc/refs/heads/main/t.sh)&&chmod +x t.sh&&./t.sh
 
         echo "====== 防火墙管理面板 ======"
         echo "1) 显示防火墙状态"
