@@ -14,6 +14,8 @@ ai写的
 
 先开放端口再设置端口
 
+给自己看：fwc旧版，t轻度美化测试，t1简洁版
+
 # firewallc
 防火墙控制脚本
 bash <(wget -q -P /root/ https://raw.githubusercontent.com/yhsup/firewallc/refs/heads/main/t.sh)&&chmod +x t.sh&&./t.sh
