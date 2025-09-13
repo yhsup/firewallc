@@ -313,19 +313,31 @@ uninstall_firewall() {
     rm -f "$BACKUP_DIR"/*
     echo ">>> 已删除所有备份文件"
 
-    # 3. 删除软连接（默认 /usr/local/bin/fw）
+    # 3. 删除软连接
     SYMLINK_PATH="/usr/local/bin/fw"
     if [[ -L "$SYMLINK_PATH" ]]; then
         rm -f "$SYMLINK_PATH"
         echo ">>> 已删除软连接 $SYMLINK_PATH"
     fi
 
-    # 4. 提示用户脚本自身可手动删除
+    # 4. 自动确保 SSH 端口开放
+    detect_ssh_port
+    if [[ "$FIREWALL" == "iptables" ]]; then
+        iptables -C INPUT -p tcp --dport $SSH_PORT -j ACCEPT 2>/dev/null || iptables -A INPUT -p tcp --dport $SSH_PORT -j ACCEPT
+        echo ">>> 已确保 SSH 端口 $SSH_PORT 开放"
+    else
+        firewall-cmd --permanent --add-port=${SSH_PORT}/tcp
+        firewall-cmd --reload
+        echo ">>> 已确保 SSH 端口 $SSH_PORT 开放 (firewalld)"
+    fi
+
+    # 5. 提示用户脚本自身可手动删除
     SCRIPT_PATH="$(realpath "$0")"
     echo ">>> 卸载完成，脚本文件 $SCRIPT_PATH 可手动删除"
 
     exit 0
 }
+
 create_symlink() {
     read -p "请输入软连接路径 (默认 /usr/local/bin/fw): " symlink_path
     symlink_path=${symlink_path:-/usr/local/bin/fw}
